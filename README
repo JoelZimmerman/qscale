@@ -1,0 +1,91 @@
+Short README, perhaps not too useful.
+
+qscale (the "q" is for "quick" -- the confusion with "quantization scale" is
+unfortunate, but there are only so many short names in the world) is a fast
+JPEG-to-JPEG-only up- and downscaler. On my 1.2GHz Core Duo laptop (using
+only one core), qscale is 3-4 times as fast as ImageMagick for downscaling
+large JPEGs (~10Mpix from my digital camera) to more moderate-sized JPEGs
+for web use etc. (like 640x480) without sacrificing quality. (Benchmarking must
+be done with a bit of care, though, in particular due to different subsampling
+options possible etc.) Most of the time in qscale's case is used on reading in
+the original image using libjpeg, which is shared among the two. However, it
+would probably not be realistic to exclude the libjpeg time, as most (although
+not all) real-world scaling tasks would indeed need to read and decode the
+source JPEG.
+
+Note: This is not to denounce ImageMagick in any way. It is a fine library,
+capable of doing much more than qscale can ever hope to do. Comparison between
+the two are mainly to provide a well-known reference, and to demonstrate that
+more specific tools than usually be made faster than generic tools.
+
+qscale is not novel in any way, nor is it perfect (far from it; it's more like
+a proof of concept) -- it is mainly a piece of engineering.
+However, the following techniques deserve some kind of mention:
+
+ - qscale recognizes that JPEGs are usually stored in the YCbCr colorspace and
+   not RGB. (ImageMagick can, too, if you give it the right flags, but not all
+   its operations are well-defined in YCbCr.) Although conversion between the
+   two is cheap, it is not free, and it is not needed for scaling. Thus, qscale
+   does not do it.
+ - qscale recognizes that JPEGs are stored with the color channels mostly
+   separate (planar) and not chunked. Scaling does not need to be done on
+   chunked data -- in fact, mostly, scaling is easier to do on planar data.
+   Thus, no conversion to chunked before scaling (and no need to convert back
+   to planar afterwards). (Note: Some SIMD properties might be easier to
+   exploit on a chunked representation. It's usually not worth it in total,
+   though.)
+ - qscale can utilize the SSE instruction set found in almost all modern
+   x86-compatible processors to do more work in the same amount of instructions
+   (It can also use the SSE3 instruction set, although the extra boost on top
+   of SSE is smaller.) It takes care to align the image data and memory
+   accesses on the right boundaries wherever it makes sense.
+ - qscale recognizes (like almost any decent scaling program) that most
+   practical filter kernels are separable, so scaling can be done in two
+   sequential simpler passes (horizontal and vertical) instead of one. The
+   order does matter, though -- I've found doing the vertical pass (in
+   cache-friendly order, doing multiple neighboring pixels at a time to
+   exploit that the processor reads in entire cache lines and not individual
+   bytes at a time) before the horizontal to be superior, in particular
+   because this case is easier to SIMD-wise.
+ - qscale understands that JPEGs are typically subsampled; ie., that the
+   different color components are not stored at the same resolution. On
+   the web, this is typically because the eye is less sensitive to color
+   (chroma) information and as such much of it can safely be stored in
+   a lower resolution to reduce file size without much visible quality
+   degradation; in the JPEGs stored by a digital camera, it is simply
+   because much of the color information is interpolated anyway (since
+   the individual CCD dots are sensitive to either red, green or blue,
+   not all at the same time), so it would not make much sense to pretend
+   there is full color information. qscale does not ask libjpeg to
+   interpolate the "missing" color information nor to downscale the
+   already-downscaled color channels as ImageMagick does, but instead
+   does a single scaling pass from the original resolution to the final
+   subsampled resolution. (This is impossible for any program working
+   in RGB mode, or chunked YCbCr.) This increases both speed and quality,
+   although the effect on the latter is not particularly large.
+
+The following optimizations are possible but not done (yet?):
+
+ - qscale does not do the IDCT itself, even though there is improvement
+   potential over libjpeg's IDCT. (There is an unmaintained and little-used fork
+   of libjpeg called libjpeg-mmx that demonstrates this quite well.) In fact,
+   since the DCT can be viewed as just another (separable, but not
+   time-invariant) FIR filter, the quantization scaling and IDCT could probably
+   be folded into the scaling in many cases, in particular those where the
+   filter kernel is large (ie. large amounts of scaling).
+ - qscale does not use multiple processors or cores (although different cores 
+   can of course work on different images at the same time).
+
+Finally, a word of advice: Even the fastest scaler can never be as fast as not
+scaling. If you can do less work, or move it to a time where it is less user
+visible, do that no matter how you scale your pictures. In particular, cache
+your downscaled pictures if you can, preferrably ahead of time. If you cannot
+predict in advance exactly what size (or sizes) you'll need, consider making
+mipmaps (ie. one image of half the resolution each way, another one of a quarter
+the resolution each way etc., down to a reasonable size) and scaling from them
+instead. It will be much faster (primarily due to less loading time) and the
+difference in quality is nearly impossible to detect, at least in my tests.
+
+qscale is Copyright 2008 Steinar H. Gunderson <sgunderson@bigfoot.com>, and
+licensed under the GNU General Public License, version 2. The full text of
+the GPLv2 can be found in the included COPYING file.
